@@ -2588,6 +2588,23 @@ class MongoClientAggregateTest(_CollectionComparisonTest):
         cmp = self._create_compare_for_collection('new_collection')
         cmp.compare.find()
 
+    def test__aggregate_let(self):
+        self.cmp.do.insert_many([
+            {'_id': 1, 'price': 10, 'tax': 0.50, 'applyDiscount': True},
+            {'_id': 2, 'price': 10, 'tax': 0.25, 'applyDiscount': False},
+        ])
+        self.cmp.compare.aggregate([{'$project': {
+            'finalTotal': {
+                '$let': {
+                   'vars': {
+                      'total': {'$add': ['$price', '$tax']},
+                      'discounted': {'$cond': {'if': '$applyDiscount', 'then': 0.9, 'else': 1}},
+                   },
+                   'in': {'$multiply': ['$$total', '$$discounted']},
+                },
+            },
+        }}])
+
 
 def _LIMIT(*args):
     return lambda cursor: cursor.limit(*args)

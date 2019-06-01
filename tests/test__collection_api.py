@@ -3144,14 +3144,6 @@ class CollectionAPITest(TestCase):
             ])
 
         with self.assertRaises(NotImplementedError):
-            self.db.collection.aggregate([{'$project': {
-                'a': {'$let': {
-                    'vars': {'a': 1},
-                    'in': {'$multiply': ['$$a', 3]},
-                }},
-            }}])
-
-        with self.assertRaises(NotImplementedError):
             self.db.collection.aggregate([
                 {'$project': {'a': {'$cmp': [1, 2]}}},
             ])
@@ -3170,6 +3162,16 @@ class CollectionAPITest(TestCase):
             self.db.collection.aggregate([
                 {'$project': {'a': {'$setEquals': [[2], [1, 2, 3]]}}},
             ])
+
+    def test__aggregate_project_let(self):
+        self.db.collection.insert_one({'_id': 1, 'a': 5, 'b': 2, 'c': 3})
+        actual = self.db.collection.aggregate([{'$project': {
+            'a': {'$let': {
+                'vars': {'a': 1},
+                'in': {'$multiply': ['$$a', 3]},
+            }},
+        }}])
+        self.assertEqual([{'_id': 1, 'a': 3}], list(actual))
 
     def test__aggregate_project_rotate(self):
         self.db.collection.insert_one({'_id': 1, 'a': 1, 'b': 2, 'c': 3})

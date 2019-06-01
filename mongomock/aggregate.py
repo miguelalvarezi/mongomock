@@ -248,6 +248,23 @@ class _Parser(object):
     def _handle_projection_operator(self, operator, value):
         if operator == '$literal':
             return value
+        if operator == '$let':
+            if not isinstance(value, dict):
+                raise OperationFailure('$let only supports an object as its argument')
+            for field in ('vars', 'in'):
+                if field not in value:
+                    raise OperationFailure("Missing '{}' parameter to $let".format(field))
+            if not isinstance(value['vars'], dict):
+                raise OperationFailure('invalid parameter: expected an object (vars)')
+            user_vars = {
+                var_key: self.parse(var_value)
+                for var_key, var_value in six.iteritems(value['vars'])
+            }
+            return _Parser(
+                self._doc_dict,
+                dict(self._user_vars, **user_vars),
+                ignore_missing_keys=self._ignore_missing_keys,
+            ).parse(value['in'])
         raise NotImplementedError("Although '%s' is a valid project operator for the "
                                   'aggregation pipeline, it is currently not implemented '
                                   'in Mongomock.' % operator)
