@@ -50,10 +50,7 @@ from six import text_type
 
 from mongomock import aggregate
 from mongomock import ConfigurationError, DuplicateKeyError, BulkWriteError
-from mongomock.filtering import filter_applies
-from mongomock.filtering import iter_key_candidates
-from mongomock.filtering import resolve_key
-from mongomock.filtering import resolve_sort_key
+from mongomock import filtering
 from mongomock import helpers
 from mongomock import InvalidOperation
 from mongomock import ObjectId
@@ -72,6 +69,11 @@ else:
     _get_perf_counter = time.clock
 
 _KwargOption = collections.namedtuple('KwargOption', ['typename', 'default', 'attrs'])
+
+
+def filter_applies(search_filter, document):
+    return filtering.filter_applies(search_filter, document, aggregate.parse_expression)
+
 
 _WITH_OPTIONS_KWARGS = {
     'codec_options': _KwargOption(
@@ -973,7 +975,7 @@ class Collection(object):
                     raise NotImplementedError(
                         'Sorting by {} is not implemented in mongomock yet'.format(sort_key))
                 dataset = iter(sorted(
-                    dataset, key=lambda x: resolve_sort_key(sort_key, x),
+                    dataset, key=lambda x: filtering.resolve_sort_key(sort_key, x),
                     reverse=sort_direction < 0))
         for document in dataset:
             yield self._copy_only_fields(document, fields, as_class)
@@ -1622,7 +1624,7 @@ class Collection(object):
             doc_list_copy.append(doc_copy)
         doc_list = doc_list_copy
         for k1 in key:
-            doc_list = sorted(doc_list, key=lambda x: resolve_key(k1, x))
+            doc_list = sorted(doc_list, key=lambda x: filtering.resolve_key(k1, x))
         for k2 in key:
             if not isinstance(k2, string_types):
                 raise TypeError(
@@ -1811,7 +1813,7 @@ class Cursor(object):
         unique = set()
         unique_dict_vals = []
         for x in self._compute_results():
-            for value in iter_key_candidates(key, x):
+            for value in filtering.iter_key_candidates(key, x):
                 if value == NOTHING:
                     continue
                 if isinstance(value, dict):

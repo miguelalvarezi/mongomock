@@ -141,7 +141,12 @@ class _Parser(object):
     def parse(self, expression):
         """Parse a MongoDB expression."""
         if not isinstance(expression, dict):
-            return self._parse_basic_expression(expression)
+            try:
+                return self._parse_basic_expression(expression)
+            except KeyError:
+                if not self._ignore_missing_keys:
+                    raise
+                return NOTHING
 
         if len(expression) > 1 and any(key.startswith('$') for key in expression):
             raise OperationFailure(
@@ -181,7 +186,8 @@ class _Parser(object):
                 if self._ignore_missing_keys:
                     continue
                 raise
-            value_dict[k] = value
+            if value is not NOTHING:
+                value_dict[k] = value
 
         return value_dict
 
@@ -458,7 +464,7 @@ class _Parser(object):
             'pipeline, it is currently not implemented in Mongomock.' % operator)
 
 
-def _parse_expression(expression, doc_dict, ignore_missing_keys=False):
+def parse_expression(expression, doc_dict, ignore_missing_keys=False):
     """Parse an expression.
 
     Args:
@@ -480,7 +486,7 @@ def _accumulate_group(output_fields, group_list):
             values = []
             for doc in group_list:
                 try:
-                    values.append(_parse_expression(key, doc))
+                    values.append(parse_expression(key, doc))
                 except KeyError:
                     continue
             if operator in _GROUPING_OPERATOR_MAP:
@@ -612,7 +618,7 @@ def _handle_graph_lookup_stage(in_collection, database, options):
         matches = foreign_collection.find({connect_to_field: query})
         new_matches = []
         for new_match in matches:
-            if filtering.filter_applies(restrict_search_with_match, new_match) \
+            if filtering.filter_applies(restrict_search_with_match, new_match, parse_expression) \
                     and new_match['_id'] not in found_items:
                 if depth_field is not None:
                     new_match = collections.OrderedDict(new_match, **{depth_field: depth})
@@ -623,7 +629,7 @@ def _handle_graph_lookup_stage(in_collection, database, options):
     for doc in out_doc:
         found_items = set()
         depth = 0
-        result = _parse_expression(start_with, doc)
+        result = parse_expression(start_with, doc)
         origin_matches = doc[local_name] = _find_matches_for_depth(result)
         while origin_matches and (max_depth is None or depth < max_depth):
             depth += 1
@@ -643,7 +649,7 @@ def _handle_group_stage(in_collection, unused_database, options):
 
         def _key_getter(doc):
             try:
-                return _parse_expression(_id, doc)
+                return parse_expression(_id, doc)
             except KeyError:
                 return None
 
@@ -710,7 +716,7 @@ def _handle_bucket_stage(in_collection, unused_database, options):
         if it's not the same type as the boundaries.
         """
         try:
-            value = _parse_expression(group_by, doc)
+            value = parse_expression(group_by, doc)
         except KeyError:
             return (is_default_last, _get_default_bucket())
         index = bisect.bisect_right(boundaries, value)
@@ -867,7 +873,7 @@ def _handle_replace_root_stage(in_collection, unused_database, options):
     out_collection = []
     for doc in in_collection:
         try:
-            new_doc = _parse_expression(new_root, doc, ignore_missing_keys=True)
+            new_doc = parse_expression(new_root, doc, ignore_missing_keys=True)
         except KeyError:
             new_doc = NOTHING
         if not isinstance(new_doc, dict):
@@ -905,7 +911,7 @@ def _handle_project_stage(in_collection, unused_database, options):
 
         for in_doc, out_doc in zip(in_collection, new_fields_collection):
             try:
-                out_doc[field] = _parse_expression(value, in_doc)
+                out_doc[field] = parse_expression(value, in_doc)
             except KeyError:
                 pass
     if (method == 'include') == (include_id is not False and include_id is not 0):
@@ -972,7 +978,9 @@ _PIPELINE_HANDLERS = {
     '$listLocalSessions': None,
     '$listSessions': None,
     '$lookup': _handle_lookup_stage,
-    '$match': lambda c, d, o: [doc for doc in c if filtering.filter_applies(o, doc)],
+    '$match': lambda c, d, o: [
+        doc for doc in c if filtering.filter_applies(o, doc, parse_expression)
+    ],
     '$merge': None,
     '$out': _handle_out_stage,
     '$planCacheStats': None,

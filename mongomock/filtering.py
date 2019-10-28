@@ -37,19 +37,19 @@ _NOT_IMPLEMENTED_OPERATORS = {
 }
 
 
-def filter_applies(search_filter, document):
+def filter_applies(search_filter, document, parse_expression):
     """Applies given filter
 
     This function implements MongoDB's matching strategy over documents in the find() method
     and other related scenarios (like $elemMatch)
     """
-    return _Filterer().apply(search_filter, document)
+    return _Filterer(parse_expression).apply(search_filter, document)
 
 
 class _Filterer(object):
     """An object to help applying a filter, using the MongoDB query language."""
 
-    def __init__(self):
+    def __init__(self, parse_expression):
         self._operator_map = dict({
             '$eq': _list_expand(operator_eq),
             '$ne': _list_expand(lambda dv, sv: not operator_eq(dv, sv), negative=True),
@@ -65,6 +65,7 @@ class _Filterer(object):
             key: _not_nothing_and(_list_expand(_compare_objects(op)))
             for key, op in iteritems(SORTING_OPERATOR_MAP)
         })
+        self._parse_expression = parse_expression
 
     def apply(self, search_filter, document):
         if not isinstance(search_filter, dict):
@@ -78,6 +79,10 @@ class _Filterer(object):
                 if not search:
                     raise OperationFailure('BadValue $and/$or/$nor must be a nonempty array')
                 if not LOGICAL_OPERATOR_MAP[key](document, search, self.apply):
+                    return False
+                continue
+            if key == '$expr':
+                if not self._parse_expression(search, document, ignore_missing_keys=True):
                     return False
                 continue
             if key in _TOP_LEVEL_OPERATORS:
