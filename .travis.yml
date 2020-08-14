@@ -4,7 +4,7 @@ os: linux
 dist: xenial
 env:
   global:
-    - MONGODB=4.1.1
+    - MONGODB=4.4.0
 jobs:
   include:
     - python: 2.7

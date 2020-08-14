@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from collections import OrderedDict
 import copy
 import datetime
@@ -2641,6 +2642,71 @@ class MongoClientAggregateTest(_CollectionComparisonTest):
             'upper_err': {'$toUpper': None},
         }}]
         self.cmp.compare.aggregate(pipeline)
+
+    def test__aggregate_regexpmatch(self):
+        self.cmp.do.insert_many([
+            {'_id': 1, 'description': 'Single LINE description.'},
+            {'_id': 2, 'description': 'First lines\nsecond line'},
+            {'_id': 3, 'description': 'Many spaces before     line'},
+            {'_id': 4, 'description': 'Multiple\nline descriptions'},
+            {'_id': 5, 'description': 'anchors, links and hyperlinks'},
+            {'_id': 6, 'description': u'métier work vocation'}
+        ])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': 'line'}},
+        }}])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': 'lin(e|k)'}},
+        }}])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': 'line', 'options': 'i'}},
+        }}])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': Regex('line', 'i')}},
+        }}])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {
+                'input': '$description', 'regex': 'line(e|k) # matches line or link',
+                'options': 'x',
+            }},
+        }}])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {
+                'input': '$description', 'regex': 'm.*line', 'options': 'si',
+            }},
+        }}])
+
+        # Missing fields
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$missing', 'regex': 'line'}},
+        }}])
+        self.cmp.compare.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': '$missing'}},
+        }}])
+
+        # Exceptions
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': ['$description', 'line']},
+        }}])
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'inut': '$description', 'regex': 'line'}},
+        }}])
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': 'line', 'other': True}},
+        }}])
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': 42, 'regex': 'line'}},
+        }}])
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': 'line', 'options': '?'}},
+        }}])
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {
+                'input': '$description', 'regex': Regex('line'), 'options': 'i'}},
+        }}])
+        self.cmp.compare_exceptions.aggregate([{'$addFields': {
+            'result': {'$regexMatch': {'input': '$description', 'regex': 5}},
+        }}])
 
     def test__aggregate35(self):
         self.cmp.do.drop()
