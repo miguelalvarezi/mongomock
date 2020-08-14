@@ -4,6 +4,7 @@ import bisect
 import collections
 import copy
 import datetime
+import decimal
 import itertools
 import math
 import numbers
@@ -19,20 +20,28 @@ from mongomock import filtering
 from mongomock import helpers
 from mongomock import OperationFailure
 
+try:
+    from bson import decimal128
+    decimal_support = True
+except ImportError:
+    decimal_support = False
+
 _random = random.Random()
 
 
 group_operators = [
     '$addToSet',
+    '$avg',
     '$first',
     '$last',
     '$max',
+    '$mergeObjects',
     '$min',
-    '$avg',
     '$push',
-    '$sum',
     '$stdDevPop',
-    '$stdDevSamp']
+    '$stdDevSamp',
+    '$sum',
+]
 arithmetic_operators = [
     '$abs',
     '$add',
@@ -59,36 +68,57 @@ project_operators = [
     '$stdDevSamp',
     '$arrayElemAt',
 ]
+control_flow_operators = [
+    '$switch',
+]
 projection_operators = ['$map', '$let', '$literal']
 date_operators = [
-    '$dayOfYear',
+    '$dateToString',
     '$dayOfMonth',
     '$dayOfWeek',
-    '$year',
-    '$month',
-    '$week',
+    '$dayOfYear',
     '$hour',
-    '$minute',
-    '$second',
+    '$isoDayOfWeek',
+    '$isoWeek',
+    '$isoWeekYear',
     '$millisecond',
-    '$dateToString',
+    '$minute',
+    '$month',
+    '$second',
+    '$week',
+    '$year',
 ]
 conditional_operators = ['$cond', '$ifNull']
 array_operators = [
     '$concatArrays',
     '$filter',
+    '$indexOfArray',
     '$isArray',
+    '$range',
+    '$reduce',
+    '$reverseArray',
     '$size',
     '$slice',
+    '$zip',
+]
+object_operators = [
+    '$mergeObjects',
 ]
 text_search_operators = ['$meta']
 string_operators = [
     '$concat',
+    '$indexOfBytes',
+    '$indexOfCP',
+    '$regexMatch',
+    '$split',
     '$strcasecmp',
+    '$strLenBytes',
+    '$strLenCP',
     '$substr',
+    '$substrBytes',
+    '$substrCP',
     '$toLower',
     '$toUpper',
-    '$toString',
 ]
 comparison_operators = [
     '$cmp',
@@ -107,6 +137,13 @@ set_operators = [
     '$allElementsTrue',
 ]
 
+type_convertion_operators = [
+    '$toString',
+    '$toInt',
+    '$toDecimal',
+    '$arrayToObject'
+]
+
 
 def _avg_operation(values):
     values_list = list(v for v in values if isinstance(v, numbers.Number))
@@ -122,8 +159,22 @@ def _group_operation(values, operator):
     return operator(values_list)
 
 
+def _sum_operation(values):
+    values_list = list()
+    if decimal_support:
+        for v in values:
+            if isinstance(v, numbers.Number):
+                values_list.append(v)
+            elif isinstance(v, decimal128.Decimal128):
+                values_list.append(v.to_decimal())
+    else:
+        values_list = list(v for v in values if isinstance(v, numbers.Number))
+    sum_value = sum(values_list)
+    return decimal128.Decimal128(sum_value) if isinstance(sum_value, decimal.Decimal) else sum_value
+
+
 _GROUPING_OPERATOR_MAP = {
-    '$sum': lambda values: sum(v for v in values if isinstance(v, numbers.Number)),
+    '$sum': _sum_operation,
     '$avg': _avg_operation,
     '$min': lambda values: _group_operation(values, min),
     '$max': lambda values: _group_operation(values, max),
@@ -170,12 +221,18 @@ class _Parser(object):
                 return self._handle_array_operator(k, v)
             if k in conditional_operators:
                 return self._handle_conditional_operator(k, v)
+            if k in control_flow_operators:
+                return self._handle_control_flow_operator(k, v)
             if k in set_operators:
                 return self._handle_set_operator(k, v)
             if k in string_operators:
                 return self._handle_string_operator(k, v)
+            if k in type_convertion_operators:
+                return self._handle_type_convertion_operator(k, v)
             if k in boolean_operators + \
-                    text_search_operators + projection_operators:
+                    text_search_operators + \
+                    projection_operators + \
+                    object_operators:
                 raise NotImplementedError(
                     "'%s' is a valid operation but it is not supported by Mongomock yet." % k)
             if k.startswith('$'):
@@ -190,6 +247,22 @@ class _Parser(object):
                 value_dict[k] = value
 
         return value_dict
+
+    def parse_many(self, values):
+        for value in values:
+            try:
+                yield self.parse(value)
+            except KeyError:
+                if self._ignore_missing_keys:
+                    yield None
+
+    def _parse_to_bool(self, expression):
+        """Parse a MongoDB expression and then convert it to bool"""
+        # handles converting `undefined` (in form of KeyError) to False
+        try:
+            return helpers.mongodb_to_bool(self.parse(expression))
+        except KeyError:
+            return False
 
     def _parse_basic_expression(self, expression):
         if isinstance(expression, six.string_types) and expression.startswith('$'):
@@ -236,7 +309,12 @@ class _Parser(object):
             return math.sqrt(self.parse(values))
         if operator == '$subtract':
             assert len(values) == 2, 'subtract must have only 2 items'
-            res = self.parse(values[0]) - self.parse(values[1])
+            value_0 = self.parse(values[0])
+            value_1 = self.parse(values[1])
+            if isinstance(value_0, datetime.datetime) and \
+                    isinstance(value_1, (six.integer_types, float)):
+                value_1 = datetime.timedelta(milliseconds=value_1)
+            res = value_0 - value_1
             if isinstance(res, datetime.timedelta):
                 return round(res.total_seconds() * 1000)
             return res
@@ -249,7 +327,7 @@ class _Parser(object):
 
     def _handle_project_operator(self, operator, values):
         if operator in _GROUPING_OPERATOR_MAP:
-            return _GROUPING_OPERATOR_MAP[operator](self.parse(val) for val in values)
+            return _GROUPING_OPERATOR_MAP[operator](self.parse_many(values))
         if operator == '$arrayElemAt':
             key, index = values
             array = self._parse_basic_expression(key)
@@ -288,7 +366,7 @@ class _Parser(object):
             parsed = self.parse(values)
             return str(parsed).upper() if parsed is not None else ''
         if operator == '$concat':
-            parsed_list = [self.parse(value) for value in values]
+            parsed_list = list(self.parse_many(values))
             return None if None in parsed_list else ''.join([str(x) for x in parsed_list])
         if operator == '$substr':
             if len(values) != 3:
@@ -312,9 +390,6 @@ class _Parser(object):
                 raise OperationFailure('strcasecmp must have 2 items')
             a, b = str(self.parse(values[0])), str(self.parse(values[1]))
             return 0 if a == b else -1 if a < b else 1
-        if operator == '$toString':
-            parsed = self.parse(values)
-            return str(parsed) if parsed is not None else None
         # This should never happen: it is only a safe fallback if something went wrong.
         raise NotImplementedError(  # pragma: no cover
             "Although '%s' is a valid string operator for the aggregation "
@@ -342,6 +417,37 @@ class _Parser(object):
             return out_value.second
         if operator == '$millisecond':
             return int(out_value.microsecond / 1000)
+        if operator == '$dateToString':
+            if not isinstance(values, dict):
+                raise OperationFailure(
+                    '$dateToString operator must correspond a dict'
+                    'that has "format" and "date" field.'
+                )
+            if not isinstance(values, dict) or not {'format', 'date'} <= set(values):
+                raise OperationFailure(
+                    '$dateToString operator must correspond a dict'
+                    'that has "format" and "date" field.'
+                )
+            if '%L' in out_value['format']:
+                raise NotImplementedError(
+                    'Although %L is a valid date format for the '
+                    '$dateToString operator, it is currently not implemented '
+                    ' in Mongomock.'
+                )
+            if 'onNull' in values:
+                raise NotImplementedError(
+                    'Although onNull is a valid field for the '
+                    '$dateToString operator, it is currently not implemented '
+                    ' in Mongomock.'
+                )
+            if 'timezone' in values.keys():
+                raise NotImplementedError(
+                    'Although timezone is a valid field for the '
+                    '$dateToString operator, it is currently not implemented '
+                    ' in Mongomock.'
+                )
+            return out_value['date'].strftime(out_value['format'])
+
         raise NotImplementedError(
             "Although '%s' is a valid date operator for the "
             'aggregation pipeline, it is currently not implemented '
@@ -419,6 +525,93 @@ class _Parser(object):
             'aggregation pipeline, it is currently not implemented '
             'in Mongomock.' % operator)
 
+    def _handle_type_convertion_operator(self, operator, values):
+        if operator == '$toString':
+            try:
+                parsed = self.parse(values)
+            except KeyError:
+                return None
+            if isinstance(parsed, bool):
+                return str(parsed).lower()
+            if isinstance(parsed, datetime.datetime):
+                return parsed.isoformat()[:-3] + 'Z'
+            return str(parsed)
+
+        if operator == '$toInt':
+            try:
+                parsed = self.parse(values)
+            except KeyError:
+                return None
+            if decimal_support:
+                if isinstance(parsed, decimal128.Decimal128):
+                    return int(parsed.to_decimal())
+                return int(parsed)
+            raise NotImplementedError(
+                'You need to import the pymongo library to support decimal128 type.'
+            )
+
+        # Document: https://docs.mongodb.com/manual/reference/operator/aggregation/toDecimal/
+        if operator == '$toDecimal':
+            if not decimal_support:
+                raise NotImplementedError(
+                    'You need to import the pymongo library to support decimal128 type.'
+                )
+            try:
+                parsed = self.parse(values)
+            except KeyError:
+                return None
+            if isinstance(parsed, bool):
+                parsed = '1' if parsed is True else '0'
+                decimal_value = decimal128.Decimal128(parsed)
+            elif isinstance(parsed, int):
+                decimal_value = decimal128.Decimal128(str(parsed))
+            elif isinstance(parsed, float):
+                exp = decimal.Decimal('.00000000000000')
+                decimal_value = decimal.Decimal(str(parsed)).quantize(exp)
+                decimal_value = decimal128.Decimal128(decimal_value)
+            elif isinstance(parsed, decimal128.Decimal128):
+                decimal_value = parsed
+            elif isinstance(parsed, str):
+                try:
+                    decimal_value = decimal128.Decimal128(parsed)
+                except decimal.InvalidOperation:
+                    raise OperationFailure(
+                        "Failed to parse number '%s' in $convert with no onError value:"
+                        'Failed to parse string to decimal' % parsed)
+            elif isinstance(parsed, datetime.datetime):
+                epoch = datetime.datetime.utcfromtimestamp(0)
+                string_micro_seconds = str((parsed - epoch).total_seconds() * 1000).split('.')[0]
+                decimal_value = decimal128.Decimal128(string_micro_seconds)
+            else:
+                raise TypeError("'%s' type is not supported" % type(parsed))
+            return decimal_value
+
+        # Document: https://docs.mongodb.com/manual/reference/operator/aggregation/arrayToObject/
+        if operator == '$arrayToObject':
+            try:
+                parsed = self.parse(values)
+            except KeyError:
+                return None
+
+            if parsed is None:
+                return None
+
+            if not isinstance(parsed, (list, tuple)):
+                raise OperationFailure(
+                    '$arrayToObject requires an array input, found: {}'.format(type(parsed))
+                )
+
+            if all(isinstance(x, dict) and set(x.keys()) == {'k', 'v'} for x in parsed):
+                return {d['k']: d['v'] for d in parsed}
+
+            if all(isinstance(x, (list, tuple)) and len(x) == 2 for x in parsed):
+                return dict(parsed)
+
+            raise OperationFailure(
+                'arrays used with $arrayToObject must contain documents '
+                'with k and v fields or two-element arrays'
+            )
+
     def _handle_conditional_operator(self, operator, values):
         if operator == '$ifNull':
             field, fallback = values
@@ -436,10 +629,7 @@ class _Parser(object):
                 condition = values['if']
                 true_case = values['then']
                 false_case = values['else']
-            try:
-                condition_value = self.parse(condition)
-            except KeyError:
-                condition_value = False
+            condition_value = self._parse_to_bool(condition)
             expression = true_case if condition_value else false_case
             return self.parse(expression)
         # This should never happen: it is only a safe fallback if something went wrong.
@@ -447,6 +637,57 @@ class _Parser(object):
             "Although '%s' is a valid conditional operator for the "
             'aggregation pipeline, it is currently not implemented '
             ' in Mongomock.' % operator)
+
+    def _handle_control_flow_operator(self, operator, values):
+        if operator == '$switch':
+            if not isinstance(values, dict):
+                raise OperationFailure(
+                    '$switch requires an object as an argument, '
+                    'found: %s' % type(values)
+                )
+
+            branches = values.get('branches', [])
+            if not isinstance(branches, (list, tuple)):
+                raise OperationFailure(
+                    "$switch expected an array for 'branches', "
+                    'found: %s' % type(branches)
+                )
+            if not branches:
+                raise OperationFailure(
+                    '$switch requires at least one branch.'
+                )
+
+            for branch in branches:
+                if not isinstance(branch, dict):
+                    raise OperationFailure(
+                        '$switch expected each branch to be an object, '
+                        'found: %s' % type(branch)
+                    )
+                if 'case' not in branch:
+                    raise OperationFailure(
+                        "$switch requires each branch have a 'case' expression"
+                    )
+                if 'then' not in branch:
+                    raise OperationFailure(
+                        "$switch requires each branch have a 'then' expression."
+                    )
+
+            for branch in branches:
+                if self._parse_to_bool(branch['case']):
+                    return self.parse(branch['then'])
+
+            if 'default' not in values:
+                raise OperationFailure(
+                    '$switch could not find a matching branch for an input, '
+                    'and no default was specified.'
+                )
+            return self.parse(values['default'])
+
+        # This should never happen: it is only a safe fallback if something went wrong.
+        raise NotImplementedError(  # pragma: no cover
+            "Although '%s' is a valid control flow operator for the "
+            'aggregation pipeline, it is currently not implemented '
+            'in Mongomock.' % operator)
 
     def _handle_set_operator(self, operator, values):
         if operator == '$in':
@@ -459,6 +700,12 @@ class _Parser(object):
                     if value not in result:
                         result.append(value)
             return result
+        if operator == '$setEquals':
+            set_values = [set(self.parse(value)) for value in values]
+            for set1, set2 in itertools.combinations(set_values, 2):
+                if set1 != set2:
+                    return False
+            return True
         raise NotImplementedError(
             "Although '%s' is a valid set operator for the aggregation "
             'pipeline, it is currently not implemented in Mongomock.' % operator)
@@ -550,10 +797,10 @@ def _handle_lookup_stage(in_collection, database, options):
                 options[operator].startswith('$'):
             raise OperationFailure(
                 "FieldPath field names may not start with '$'")
-        if operator in ('localField', 'as') and \
+        if operator == 'as' and \
                 '.' in options[operator]:
             raise NotImplementedError(
-                "Although '.' is valid in the 'localField' and 'as' "
+                "Although '.' is valid in the 'as' "
                 'parameters for the lookup stage of the aggregation '
                 'pipeline, it is currently not implemented in Mongomock.')
 
@@ -563,7 +810,10 @@ def _handle_lookup_stage(in_collection, database, options):
     local_name = options['as']
     foreign_collection = database.get_collection(foreign_name)
     for doc in in_collection:
-        query = doc.get(local_field)
+        try:
+            query = helpers.get_value_by_dot(doc, local_field)
+        except KeyError:
+            query = None
         if isinstance(query, list):
             query = {'$in': query}
         matches = foreign_collection.find({foreign_field: query})
@@ -911,7 +1161,7 @@ def _handle_project_stage(in_collection, unused_database, options):
 
         for in_doc, out_doc in zip(in_collection, new_fields_collection):
             try:
-                out_doc[field] = parse_expression(value, in_doc)
+                out_doc[field] = parse_expression(value, in_doc, ignore_missing_keys=True)
             except KeyError:
                 pass
     if (method == 'include') == (include_id is not False and include_id is not 0):
@@ -931,6 +1181,27 @@ def _handle_project_stage(in_collection, unused_database, options):
             dict(a, **b)
             for a, b in zip(out_collection, new_fields_collection)
         ]
+    return out_collection
+
+
+def _handle_add_fields_stage(in_collection, unused_database, options):
+    if not options:
+        raise OperationFailure(
+            'Invalid $addFields :: caused by :: specification must have at least one field')
+    out_collection = [dict(doc) for doc in in_collection]
+    for field, value in six.iteritems(options):
+        for in_doc, out_doc in zip(in_collection, out_collection):
+            try:
+                out_value = parse_expression(value, in_doc, ignore_missing_keys=True)
+            except KeyError:
+                continue
+            parts = field.split('.')
+            for subfield in parts[:-1]:
+                out_doc[subfield] = out_doc.get(subfield, {})
+                if not isinstance(out_doc[subfield], dict):
+                    out_doc[subfield] = {}
+                out_doc = out_doc[subfield]
+            out_doc[parts[-1]] = out_value
     return out_collection
 
 
@@ -963,7 +1234,7 @@ def _handle_facet_stage(in_collection, database, options):
 
 
 _PIPELINE_HANDLERS = {
-    '$addFields': None,
+    '$addFields': _handle_add_fields_stage,
     '$bucket': _handle_bucket_stage,
     '$bucketAuto': None,
     '$collStats': None,
@@ -989,7 +1260,7 @@ _PIPELINE_HANDLERS = {
     '$replaceRoot': _handle_replace_root_stage,
     '$replaceWith': None,
     '$sample': _handle_sample_stage,
-    '$set': None,
+    '$set': _handle_add_fields_stage,
     '$skip': lambda c, d, o: c[o:],
     '$sort': _handle_sort_stage,
     '$sortByCount': None,

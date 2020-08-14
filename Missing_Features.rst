@@ -10,7 +10,6 @@ If I miss to include a feature in the below list, Please feel free to add to the
 * session options
 * codec options
 * Operations of the aggregate pipeline:
-  * `$addFields <https://docs.mongodb.com/manual/reference/operator/aggregation/addFields/>`_
   * `$bucketAuto <https://docs.mongodb.com/manual/reference/operator/aggregation/bucketAuto/>`_
   * `$collStats <https://docs.mongodb.com/manual/reference/operator/aggregation/collStats/>`_
   * `$currentOp <https://docs.mongodb.com/manual/reference/operator/aggregation/currentOp/>`_
@@ -22,22 +21,24 @@ If I miss to include a feature in the below list, Please feel free to add to the
   * `$planCacheStats <https://docs.mongodb.com/manual/reference/operator/aggregation/planCacheStats/>`_
   * `$redact <https://docs.mongodb.com/manual/reference/operator/aggregation/redact/>`_
   * `$replaceWith <https://docs.mongodb.com/manual/reference/operator/aggregation/replaceWith/>`_
-  - `$set <https://docs.mongodb.com/manual/reference/operator/aggregation/set/>` _
   * `$sortByCount <https://docs.mongodb.com/manual/reference/operator/aggregation/sortByCount/>`_
-  - `$unset <https://docs.mongodb.com/manual/reference/operator/aggregation/unset/>` _
+  * `$unset <https://docs.mongodb.com/manual/reference/operator/aggregation/unset/>` _
 * Operators within the aggregate pipeline:
   * Arithmetic operations on dates:
     * `$add <https://docs.mongodb.com/manual/reference/operator/aggregation/add/>`_
-    * `$subtract <https://docs.mongodb.com/manual/reference/operator/aggregation/subtract/>`_
   * Boolean operators ($and, $or, $not)
-  * Some set operators ($setEquals, $setIntersection, $setDifference, …)
+  * Some date operators ($isoDayOfWeek, $isoWeekYear, …)
+  * Some set operators ($setIntersection, $setDifference, …)
+  * Some string operators ($indexOfBytes, $split, $regexMatch, …)
   * Text search operator ($meta)
   * Projection operators ($map, $let)
-  * Array operators ($concatArrays, $isArray)
+  * Array operators ($concatArrays, $isArray, $indexOfArray, …)
+  * `$mergeObjects <https://docs.mongodb.com/manual/reference/operator/aggregation/mergeObjects/>`_
 * Operators within the query language (find):
-  * `$jsonSchema <https://docs.mongodb.com/manual/reference/operator/query/jsonSchema/>`
-  * `$text <https://docs.mongodb.com/manual/reference/operator/query/text/>` search
-  * `$where <https://docs.mongodb.com/manual/reference/operator/query/where/>`
+  * `$jsonSchema <https://docs.mongodb.com/manual/reference/operator/query/jsonSchema/>`_
+  * `$text <https://docs.mongodb.com/manual/reference/operator/query/text/>`_ search
+  * `$where <https://docs.mongodb.com/manual/reference/operator/query/where/>`_
 * `map_reduce <https://docs.mongodb.com/manual/reference/command/mapReduce/>`_ options (``scope`` and ``finalize``)
 * Database `command <https://docs.mongodb.com/manual/reference/command/>`_ method except for the ``ping`` command.
 * Raw Batch BSON operations (`aggregate_raw_batches` and `find_raw_batches`)
+* `Expiring Data <https://docs.mongodb.com/manual/tutorial/expire-data/>`_

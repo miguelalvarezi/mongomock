@@ -40,7 +40,7 @@ since they replicate the series of calls made in the code, violating the DRY rul
      record()
      collection_mock.find().AndReturn(objects)
      for obj in objects:
-         collection_mock.update_one(document, {'$set': {'votes': document['votes']}})
+         collection_mock.update_one(obj, {'$set': {'votes': obj['votes']}})
      replay()
      increase_votes(collection_mock)
      verify()
@@ -76,7 +76,8 @@ This code checks *increase_votes* with respect to its functionality, not syntax 
 therefore is much more robust as a test.
 
 If the code to be tested is creating the connection itself with pymongo, you can use
-mongomock.patch:
+mongomock.patch (NOTE: you should use :code:`pymongo.MongoClient(...)` rather than
+:code:`from pymongo import MongoClient`, as shown below):
 
 .. code-block:: python
 
@@ -119,7 +120,7 @@ To download, setup and perfom tests, run the following commands on Mac / Linux:
 
 .. code-block:: bash
 
- git clone git@github.com:vmalloc/mongomock.git
+ git clone git@github.com:mongomock/mongomock.git
  pip install tox
  cd mongomock
  tox
@@ -130,12 +131,12 @@ Branching model
 
 The branching model used for this project follows the `gitflow workflow`_.  This means that pull requests
 should be issued against the `develop` branch and *not* the `master` branch. If you want to contribute to
-the legacy 2.x branch than your pull request should go into the `support/2.x` branch.
+the legacy 2.x branch then your pull request should go into the `support/2.x` branch.
 
 Acknowledgements
 ----------------
 
-Mongomock has originally been developed by `Rotem Yaari <https://github.com/vmalloc/>`_, then by `Martin Domke <https://github.com/mdomke`. It is currently being developed and maintained by `Pascal Corpet <https://github.com/pcorpet>`_ .
+Mongomock has originally been developed by `Rotem Yaari <https://github.com/vmalloc/>`_, then by `Martin Domke <https://github.com/mdomke>`. It is currently being developed and maintained by `Pascal Corpet <https://github.com/pcorpet>`_ .
 
 Also, many thanks go to the following people for helping out, contributing pull requests and fixing bugs:
 
@@ -168,6 +169,7 @@ Also, many thanks go to the following people for helping out, contributing pull 
 * Julian Hille
 * Krzysztof Płocharz
 * Lyon Zhang
+* `Lucas Rangel Cezimbra <https://github.com/Lrcezimbra/>`_
 * Marc Prewitt
 * Marcin Barczynski
 * Marian Galik
@@ -182,6 +184,7 @@ Also, many thanks go to the following people for helping out, contributing pull 
 * Srinivas Reddy Thatiparthy
 * Taras Boiko
 * Todd Tomkinson
+* `Xinyan Lu <https://github.com/lxy1992/>`_
 * Zachary Carter
 * catty (ca77y _at_ live.com)
 * emosenkis
@@ -194,7 +197,7 @@ Also, many thanks go to the following people for helping out, contributing pull 
 * lidongyong
 
 
-.. _examples in tests: https://github.com/vmalloc/mongomock/blob/master/tests/test__mongomock.py#L108
+.. _examples in tests: https://github.com/mongomock/mongomock/blob/develop/tests/test__mongomock.py
 
 .. _gitflow workflow: https://www.atlassian.com/git/tutorials/comparing-workflows/gitflow-workflow
 

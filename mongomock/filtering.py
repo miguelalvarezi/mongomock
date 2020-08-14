@@ -1,5 +1,6 @@
 from datetime import datetime
 import itertools
+import uuid
 
 from .helpers import ObjectId, RE_TYPE
 from . import OperationFailure
@@ -15,9 +16,10 @@ except ImportError:
     NoneType = type(None)
 
 try:
-    from bson import Regex
+    from bson import Regex, DBRef
     _RE_TYPES = (RE_TYPE, Regex)
 except ImportError:
+    DBRef = None
     _RE_TYPES = (RE_TYPE,)
 
 _TOP_LEVEL_OPERATORS = {'$expr', '$text', '$where', '$jsonSchema'}
@@ -105,7 +107,9 @@ class _Filterer(object):
             if isinstance(search, dict) and '$all' in search:
                 if not self._all_op(iter_key_candidates(key, document), search['$all']):
                     return False
-                continue
+                # if there are no query operators then continue
+                if len(search) == 1:
+                    continue
 
             for doc_val in iter_key_candidates(key, document):
                 has_candidates |= doc_val is not NOTHING
@@ -295,6 +299,12 @@ def bson_compare(op, a, b, can_compare_types=True):
     if a_type != b_type:
         return can_compare_types and op(a_type, b_type)
 
+    # Compare DBRefs as dicts
+    if type(a).__name__ == 'DBRef' and hasattr(a, 'as_doc'):
+        a = a.as_doc()
+    if type(b).__name__ == 'DBRef' and hasattr(b, 'as_doc'):
+        b = b.as_doc()
+
     if isinstance(a, dict):
         # MongoDb server compares the type before comparing the keys
         # https://github.com/mongodb/mongo/blob/f10f214/src/mongo/bson/bsonelement.cpp#L516
@@ -341,6 +351,8 @@ def _get_compare_type(val):
         return 20
     if isinstance(val, (tuple, list)):
         return 25
+    if isinstance(val, uuid.UUID):
+        return 30
     if isinstance(val, bytes):
         assert PY3
         return 30
@@ -350,6 +362,10 @@ def _get_compare_type(val):
         return 45
     if isinstance(val, _RE_TYPES):
         return 50
+    if DBRef and isinstance(val, DBRef):
+        # According to the C++ code, this should be 55 but apparently sending a DBRef through
+        # pymongo is stored as a dict.
+        return 20
     raise NotImplementedError(
         "Mongomock does not know how to sort '%s' of type '%s'" %
         (val, type(val)))
@@ -484,7 +500,13 @@ def resolve_sort_key(key, doc):
     value = resolve_key(key, doc)
     # see http://docs.mongodb.org/manual/reference/method/cursor.sort/#ascending-descending-sort
     if value is NOTHING:
-        return 0, BsonComparable(None)
+        return 1, BsonComparable(None)
+
+    # List or tuples are sorted solely by their first value.
+    if isinstance(value, (tuple, list)):
+        if not value:
+            return 0, BsonComparable(None)
+        return 1, BsonComparable(value[0])
 
     return 1, BsonComparable(value)
 
